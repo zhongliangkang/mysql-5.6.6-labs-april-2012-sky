@@ -1,0 +1,123 @@
+####################################
+# SETUP
+####################################
+CREATE DATABASE statements_digest;
+USE statements_digest;
+CREATE TABLE t1(a int);
+CREATE TABLE t2(a int);
+CREATE TABLE t3(a int, b int);
+CREATE TABLE t4(a int, b int);
+CREATE TABLE t5(a int, b int, c int);
+SELECT * FROM performance_schema.setup_consumers;
+NAME	ENABLED
+events_stages_current	YES
+events_stages_history	YES
+events_stages_history_long	YES
+events_statements_current	NO
+events_statements_history	YES
+events_statements_history_long	YES
+events_waits_current	YES
+events_waits_history	YES
+events_waits_history_long	YES
+global_instrumentation	YES
+thread_instrumentation	YES
+statements_digest	YES
+TRUNCATE TABLE performance_schema.events_statements_summary_by_digest;
+####################################
+# EXECUTION
+####################################
+SELECT 1 FROM t1;
+1
+SELECT 1 FROM `t1`;
+1
+SELECT 1,2 FROM t1;
+1	2
+SELECT 1, 2, 3, 4 FROM t1;
+1	2	3	4
+SELECT 1 FROM t2;
+1
+SELECT 1,2 FROM t2;
+1	2
+SELECT 1, 2, 3, 4 FROM t2;
+1	2	3	4
+INSERT INTO t1 VALUES (1);
+INSERT INTO t2 VALUES (1);
+INSERT INTO t3 VALUES (1, 2);
+INSERT INTO t4 VALUES (1, 2);
+INSERT INTO t5 VALUES (1, 2, 3);
+INSERT INTO t1 VALUES (1), (2), (3);
+INSERT INTO t1 VALUES (1), (2), (3), (4);
+INSERT INTO t3 VALUES (1, 2), (3, 4), (5, 6);
+INSERT INTO t5 VALUES (1, 2, 3), (4, 5, 6), (7, 8, 9);
+SELECT                                          1           +        1;
+1           +        1
+2
+SELECT 1;
+1
+1
+SELECT 1 /* This is an inline comment */ + 1;
+1 /* This is an inline comment */ + 1
+2
+SELECT 1+
+/*
+this is a
+multiple-line comment
+*/
+1;
+1+
+/*
+this is a
+multiple-line comment
+*/
+1
+2
+CREATE SCHEMA statements_digest_temp;
+DROP SCHEMA statements_digest_temp;
+CREATE DATABASE statements_digest_temp;
+DROP DATABASE statements_digest_temp;
+SELECT 1 from t11;
+ERROR 42S02: Table 'statements_digest.t11' doesn't exist
+create table t11 (c char(4));
+create table t11 (c char(4));
+ERROR 42S01: Table 't11' already exists
+insert into t11 values("MySQL");
+Warnings:
+Warning	1265	Data truncated for column 'c' at row 1
+####################################
+# QUERYING PS STATEMENT DIGEST
+####################################
+SELECT digest, digest_text, count_star FROM performance_schema.events_statements_summary_by_digest;
+digest	digest_text	count_star
+a938a1f31256fd2ec1bc3cda9b7a8519	TRUNCATE TABLE performance_schema . events_statements_summary_by_digest  	1
+b28a9404584deb270b51e7f1342bc275	SELECT ? FROM t1  	1
+d737adf1bc389d83cd646b090fa19b9d	SELECT ? FROM `t1`  	1
+ed574bdff100147c617ae14673bcf47c	SELECT ?, ... FROM t1  	2
+47530bc269bce99804bbce34a0bcdab3	SELECT ? FROM t2  	1
+57840a8cda3e1eeb048dbecfc4e81b19	SELECT ?, ... FROM t2  	2
+a58cc957ffdd32c2cffeffa65b6c9324	INSERT INTO t1 VALUES (?)  	1
+439869529508fe62007c6f97890a43ae	INSERT INTO t2 VALUES (?)  	1
+a9f32e4c511753d7317a014630050274	INSERT INTO t3 VALUES (...)  	1
+55351862b4cc299bfd9958920936dc34	INSERT INTO t4 VALUES (...)  	1
+976ba1912e3bf2d29fb0eefed75c9f89	INSERT INTO t5 VALUES (...)  	1
+de71aea3aaab6826e52c690197c28a42	INSERT INTO t1 VALUES (?) /* , ... */  	2
+51a351f92e6fd34cef43add51eef65fe	INSERT INTO t3 VALUES (...) /* , ... */  	1
+85ec05195fd87103b8e751c559abe9d4	INSERT INTO t5 VALUES (...) /* , ... */  	1
+6615eea1fca1808593cc7eea41dff3f5	SELECT ? + ?  	3
+6e7e36144fe6f5c3964707ebd7c53de8	SELECT ?  	1
+30046d97cfdc44c95bdaa7f3987d0a20	CREATE SCHEMA statements_digest_temp  	2
+8e40e6461f3ab4454ddb8f21b5cda3ba	DROP SCHEMA statements_digest_temp  	2
+2c1f50defd70a0f0e5bd5803d134c257	SELECT ? FROM t11  	1
+1cfadd74d3e5f992ae8ae694c86fc9ec	CREATE TABLE t11 ( c CHARACTER (?) )  	2
+367c6d0eb00c1a6e553deddc195a6061	INSERT INTO t11 VALUES (?)  	1
+c3a2b135ce4531c7915e63adefa1d4c4	SHOW WARNINGS  	1
+SELECT digest, digest_text FROM performance_schema.events_statements_current;
+digest	digest_text
+####################################
+# CLEANUP
+####################################
+DROP TABLE IF EXISTS t1;
+DROP TABLE IF EXISTS t2;
+DROP TABLE IF EXISTS t3;
+DROP TABLE IF EXISTS t4;
+DROP TABLE IF EXISTS t5;
+DROP DATABASE IF EXISTS statements_digest;

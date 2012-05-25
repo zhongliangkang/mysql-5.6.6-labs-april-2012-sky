@@ -1,0 +1,256 @@
+#
+# These test make sure that tables are visible after rebooting
+#
+
+--source include/have_innodb.inc
+--source include/not_embedded.inc
+SET default_storage_engine=InnoDB;
+
+--echo #
+--echo # A series of tests to make sure tables are opened after restart.
+--echo # Bug#13357607 Compressed file-per-table tablespaces fail to open
+--echo #
+# This bug was introduced without a regression test failing since
+# there were no tests showing that tablespaces could e created and
+# then read after reboot.
+#
+
+--disable_query_log
+let $MYSQLD_DATADIR= `select @@datadir`;
+let $data_directory = DATA DIRECTORY='$MYSQL_TMP_DIR/alternate_dir';
+
+let $innodb_file_per_table=`select @@innodb_file_per_table`;
+let $innodb_file_format=`select @@innodb_file_format`;
+--enable_query_log
+
+set global innodb_file_per_table=on;
+set global innodb_file_format='Barracuda';
+
+CREATE TABLE t1(c1 DOUBLE AUTO_INCREMENT KEY, c2 CHAR(10), c3 VARCHAR(100), c4 DATE, c5 TEXT)
+	ROW_FORMAT=REDUNDANT  ENGINE=InnoDB;
+INSERT INTO t1 VALUES (1000000000, 'MySQL', 'InnoDB', '2011-11-11', 'Read this after reboot');
+INSERT INTO t1 (SELECT 0, c2, c3, c4, c5 FROM t1);
+INSERT INTO t1 (SELECT 0, c2, c3, c4, c5 FROM t1);
+INSERT INTO t1 (SELECT 0, c2, c3, c4, c5 FROM t1);
+INSERT INTO t1 (SELECT 0, c2, c3, c4, c5 FROM t1);
+SHOW CREATE TABLE t1;
+SELECT count(*) FROM t1;
+
+CREATE TABLE t2(c1 DOUBLE AUTO_INCREMENT KEY, c2 CHAR(10), c3 VARCHAR(100), c4 DATE, c5 TEXT)
+	ROW_FORMAT=COMPACT  ENGINE=InnoDB;
+INSERT INTO t2 VALUES (1000000000, 'MySQL', 'InnoDB', '2011-11-11', 'Read this after reboot');
+INSERT INTO t2 (SELECT 0, c2, c3, c4, c5 FROM t2);
+INSERT INTO t2 (SELECT 0, c2, c3, c4, c5 FROM t2);
+INSERT INTO t2 (SELECT 0, c2, c3, c4, c5 FROM t2);
+INSERT INTO t2 (SELECT 0, c2, c3, c4, c5 FROM t2);
+SHOW CREATE TABLE t2;
+SELECT count(*) FROM t2;
+
+CREATE TABLE t3(c1 DOUBLE AUTO_INCREMENT KEY, c2 CHAR(10), c3 VARCHAR(100), c4 DATE, c5 TEXT)
+	ROW_FORMAT=COMPRESSED  KEY_BLOCK_SIZE=4  ENGINE=InnoDB;
+INSERT INTO t3 VALUES (1000000000, 'MySQL', 'InnoDB', '2011-11-11', 'Read this after reboot');
+INSERT INTO t3 (SELECT 0, c2, c3, c4, c5 FROM t3);
+INSERT INTO t3 (SELECT 0, c2, c3, c4, c5 FROM t3);
+INSERT INTO t3 (SELECT 0, c2, c3, c4, c5 FROM t3);
+INSERT INTO t3 (SELECT 0, c2, c3, c4, c5 FROM t3);
+SHOW CREATE TABLE t3;
+SELECT count(*) FROM t3;
+
+CREATE TABLE t4(c1 DOUBLE AUTO_INCREMENT KEY, c2 CHAR(10), c3 VARCHAR(100), c4 DATE, c5 TEXT)
+	ROW_FORMAT=DYNAMIC  ENGINE=InnoDB;
+INSERT INTO t4 VALUES (1000000000, 'MySQL', 'InnoDB', '2011-11-11', 'Read this after reboot');
+INSERT INTO t4 (SELECT 0, c2, c3, c4, c5 FROM t4);
+INSERT INTO t4 (SELECT 0, c2, c3, c4, c5 FROM t4);
+INSERT INTO t4 (SELECT 0, c2, c3, c4, c5 FROM t4);
+INSERT INTO t4 (SELECT 0, c2, c3, c4, c5 FROM t4);
+SHOW CREATE TABLE t4;
+SELECT count(*) FROM t4;
+
+--echo #
+--echo # Test that the DATA DIRECTORY is visible after restart.
+--echo #
+--mkdir $MYSQL_TMP_DIR/alternate_dir
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+eval CREATE TABLE t5(c1 DOUBLE AUTO_INCREMENT KEY, c2 CHAR(10), c3 VARCHAR(100), c4 DATE, c5 TEXT)
+	ROW_FORMAT=DYNAMIC  ENGINE=InnoDB  $data_directory;
+INSERT INTO t5 VALUES (1000000000, 'MySQL', 'InnoDB', '2011-11-11', 'Read this after reboot');
+INSERT INTO t5 (SELECT 0, c2, c3, c4, c5 FROM t5);
+INSERT INTO t5 (SELECT 0, c2, c3, c4, c5 FROM t5);
+INSERT INTO t5 (SELECT 0, c2, c3, c4, c5 FROM t5);
+INSERT INTO t5 (SELECT 0, c2, c3, c4, c5 FROM t5);
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE t5;
+SELECT count(*) FROM t5;
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables WHERE name like 'test%';
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces;
+--replace_result ./ MYSQLD_DATADIR/  $MYSQLD_DATADIR MYSQLD_DATADIR  $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+
+
+--echo # Restart the server
+--source include/restart_mysqld.inc
+SHOW VARIABLES LIKE 'innodb_file_per_table';
+
+SHOW CREATE TABLE t1;
+SHOW CREATE TABLE t2;
+SHOW CREATE TABLE t3;
+SHOW CREATE TABLE t4;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE t5;
+
+INSERT INTO t1 (SELECT 0, c2, c3, c4, c5 FROM t1);
+INSERT INTO t2 (SELECT 0, c2, c3, c4, c5 FROM t2);
+INSERT INTO t3 (SELECT 0, c2, c3, c4, c5 FROM t3);
+INSERT INTO t4 (SELECT 0, c2, c3, c4, c5 FROM t4);
+INSERT INTO t5 (SELECT 0, c2, c3, c4, c5 FROM t5);
+
+SELECT count(*) FROM t1;
+SELECT count(*) FROM t2;
+SELECT count(*) FROM t3;
+SELECT count(*) FROM t4;
+SELECT count(*) FROM t5;
+
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables WHERE name like 'test%';
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces;
+--replace_result ./ MYSQLD_DATADIR/  $MYSQLD_DATADIR MYSQLD_DATADIR  $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+
+DROP TABLE t1;
+DROP TABLE t2;
+DROP TABLE t3;
+DROP TABLE t4;
+
+--echo #
+--echo # Truncate the remote tablespace and restart.
+--echo #
+TRUNCATE TABLE t5;
+
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+INSERT INTO t5 VALUES (1000000000, 'MySQL', 'InnoDB', '2011-11-11', 'Read this after reboot');
+INSERT INTO t5 (SELECT 0, c2, c3, c4, c5 FROM t5);
+SELECT count(*) FROM t5;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE t5;
+--file_exists $MYSQLD_DATADIR/test/t5.frm
+--file_exists $MYSQLD_DATADIR/test/t5.isl
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t5.ibd
+
+--echo # Restart the server
+--source include/restart_mysqld.inc
+SHOW VARIABLES LIKE 'innodb_file_per_table';
+
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+INSERT INTO t5 (SELECT 0, c2, c3, c4, c5 FROM t5);
+SELECT count(*) FROM t5;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE t5;
+--file_exists $MYSQLD_DATADIR/test/t5.frm
+--file_exists $MYSQLD_DATADIR/test/t5.isl
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t5.ibd
+
+--echo #
+--echo # Rename file table and tablespace, then restart
+--echo #
+RENAME TABLE t5 TO t55;
+
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+INSERT INTO t55 (SELECT 0, c2, c3, c4, c5 FROM t55);
+SELECT count(*) FROM t55;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE t55;
+--file_exists $MYSQLD_DATADIR/test/t55.frm
+--file_exists $MYSQLD_DATADIR/test/t55.isl
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t55.ibd
+
+--echo # Restart the server
+--source include/restart_mysqld.inc
+SHOW VARIABLES LIKE 'innodb_file_per_table';
+
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+INSERT INTO t55 (SELECT 0, c2, c3, c4, c5 FROM t55);
+SELECT count(*) FROM t55;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE t55;
+--file_exists $MYSQLD_DATADIR/test/t55.frm
+--file_exists $MYSQLD_DATADIR/test/t55.isl
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t55.ibd
+--echo # Restart the server
+--source include/restart_mysqld.inc
+
+--echo #
+--echo # Move the remote tablespace to a new location and change the ISL file
+--echo #
+--mkdir $MYSQL_TMP_DIR/new_dir
+--mkdir $MYSQL_TMP_DIR/new_dir/test
+--echo # Copying tablespace to new_dir
+--copy_file $MYSQL_TMP_DIR/alternate_dir/test/t55.ibd $MYSQL_TMP_DIR/new_dir/test/t55.ibd
+--remove_file $MYSQLD_DATADIR/test/t55.isl
+--exec echo $MYSQL_TMP_DIR/new_dir/test/t55.ibd > $MYSQLD_DATADIR/test/t55.isl
+
+--echo # Restart the server
+--source include/restart_mysqld.inc
+
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+INSERT INTO t55 (SELECT 0, c2, c3, c4, c5 FROM t55);
+SELECT count(*) FROM t55;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE t55;
+--file_exists $MYSQLD_DATADIR/test/t55.frm
+--file_exists $MYSQLD_DATADIR/test/t55.isl
+--file_exists $MYSQL_TMP_DIR/new_dir/test/t55.ibd
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t55.ibd
+--remove_file $MYSQL_TMP_DIR/alternate_dir/test/t55.ibd
+--error 1
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t55.ibd
+--echo # Restart the server
+--source include/restart_mysqld.inc
+
+--echo #
+--echo # Move the remote tablespace back to the default datadir and delete the ISL file.
+--echo #
+FLUSH TABLE t55 WITH READ LOCK;
+--echo # Copying tablespace to default datadir
+--copy_file $MYSQL_TMP_DIR/new_dir/test/t55.ibd $MYSQLD_DATADIR/test/t55.ibd
+UNLOCK TABLES;
+--remove_file $MYSQLD_DATADIR/test/t55.isl
+--file_exists $MYSQL_TMP_DIR/new_dir/test/t55.ibd
+--file_exists $MYSQLD_DATADIR/test/t55.ibd
+
+-- echo # Restart the server
+-- source include/restart_mysqld.inc
+
+--replace_result $MYSQLD_DATADIR MYSQLD_DATADIR ./ MYSQLD_DATADIR/
+SELECT path FROM information_schema.innodb_sys_datafiles;
+INSERT INTO t55 (SELECT 0, c2, c3, c4, c5 FROM t55);
+SELECT count(*) FROM t55;
+--replace_result $MYSQLD_DATADIR MYSQLD_DATADIR ./ MYSQLD_DATADIR/
+SHOW CREATE TABLE t55;
+--file_exists $MYSQLD_DATADIR/test/t55.frm
+--file_exists $MYSQLD_DATADIR/test/t55.ibd
+--error 1
+--file_exists $MYSQLD_DATADIR/test/t55.isl
+
+DROP TABLE t55;
+
+--echo #
+--echo # Cleanup
+--echo #
+
+--file_exists $MYSQL_TMP_DIR/new_dir/test/t55.ibd
+--remove_file $MYSQL_TMP_DIR/new_dir/test/t55.ibd
+--rmdir $MYSQL_TMP_DIR/alternate_dir/test
+--rmdir $MYSQL_TMP_DIR/alternate_dir
+
+-- disable_query_log
+eval set global innodb_file_format=$innodb_file_format;
+eval set global innodb_file_per_table=$innodb_file_per_table;
+

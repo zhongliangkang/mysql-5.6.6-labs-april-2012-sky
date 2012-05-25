@@ -1,0 +1,414 @@
+#
+# A series of tests to show the correct tablespace behavior.
+# See also; parts.partition_basic_symlink_innodb.test for
+# partition related tests with remote tablespaces.
+# See innodb.innodb-restart for tablespace migration tests.
+#
+--source include/have_innodb.inc
+SET default_storage_engine=InnoDB;
+
+--echo #
+--echo # TABLESPACE related tests.
+--echo #
+
+# Set up some variables
+LET $MYSQLD_DATADIR = `select @@datadir`;
+LET $data_directory_clause = DATA DIRECTORY='$MYSQL_TMP_DIR/alternate_dir';
+LET $index_directory_clause = INDEX DIRECTORY='$MYSQL_TMP_DIR/alternate_dir';
+
+# These values can change during the test
+LET $innodb_file_format_orig=`select @@innodb_file_format`;
+LET $innodb_file_per_table_orig=`select @@innodb_file_per_table`;
+LET $innodb_strict_mode_orig=`select @@session.innodb_strict_mode`;
+
+--echo #
+--echo # CREATE TABLE ... DATA DIRECTORY
+--echo #
+
+--echo # Innodb does not support INDEX DIRECTORY.
+SET SESSION innodb_strict_mode = ON;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+--error ER_CANT_CREATE_TABLE
+eval CREATE TABLE t1 (a int KEY, b text) $index_directory_clause;
+SHOW WARNINGS;
+
+--echo # Without strict mode, INDEX DIRECTORY is just ignored
+SET SESSION innodb_strict_mode = OFF;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+eval CREATE TABLE t1 (a int KEY, b text) $index_directory_clause;
+SHOW WARNINGS;
+SHOW CREATE TABLE t1;
+DROP TABLE t1;
+
+--echo # Innodb does not support DATA DIRECTORY without innodb_file_per_table=ON.
+SET SESSION innodb_strict_mode = ON;
+SET GLOBAL innodb_file_per_table=OFF;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+--error ER_CANT_CREATE_TABLE
+eval CREATE TABLE t1 (a int KEY, b text) $data_directory_clause;
+SHOW WARNINGS;
+
+--echo # Without strict mode, DATA DIRECTORY without innodb_file_per_table=ON is just ignored.
+SET SESSION innodb_strict_mode = OFF;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+eval CREATE TABLE t1 (a int KEY, b text) $data_directory_clause;
+SHOW WARNINGS;
+SHOW CREATE TABLE t1;
+DROP TABLE t1;
+
+--echo # Now set innodb_file_per_table so that DATA DIRECTORY can be tested.
+SET GLOBAL innodb_file_per_table=ON;
+
+--echo # Create the tablespace in MYSQL_TMP_DIR/alternate_dir
+--echo # InnoDB will create the sub-directories if needed.
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+eval CREATE TABLE t1 (a int KEY, b text) $data_directory_clause;
+SHOW WARNINGS;
+INSERT INTO t1 VALUES (1, "Create the tablespace");
+SELECT * FROM t1;
+
+--echo # Check if tablespace file exists where we specified in DATA DIRECTORY
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t1.ibd
+
+--echo # Check if link file exists  in MYSQLD_DATADIR
+--file_exists $MYSQLD_DATADIR/test/t1.isl
+
+--echo # Check that DATA DIRECTORY shows up in the SHOW CREATE TABLE results.
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE t1;
+
+--echo # Show that the new system tables have this table in them correctly
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables WHERE name LIKE 'test%';
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces;
+--replace_regex /emp#P#/emp#p#/
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+
+--echo # Show that the system tables are updated on drop table
+DROP TABLE t1;
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables WHERE name LIKE 'test%';
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces;
+SELECT path FROM information_schema.innodb_sys_datafiles;
+
+--echo # Create the same table a second time in the same place
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+eval CREATE TABLE t1 (a int KEY, b text) $data_directory_clause;
+
+INSERT INTO t1 VALUES (2, "Create the same table a second time in the same place");
+SELECT * FROM t1;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE t1;
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables WHERE name LIKE 'test%';
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t1.ibd
+--file_exists $MYSQLD_DATADIR/test/t1.isl
+--error 1
+--file_exists $MYSQLD_DATADIR/test/t1.ibd
+
+--echo # Truncate the table, then insert and verify
+TRUNCATE TABLE t1;
+INSERT INTO t1 VALUES (3, "Truncate the table, then insert");
+SELECT * FROM t1;
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables WHERE name LIKE 'test%';
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t1.ibd
+--file_exists $MYSQLD_DATADIR/test/t1.isl
+
+--echo # Rename the table, then insert and verify
+RENAME TABLE t1 TO t2;
+INSERT INTO t2 VALUES (4, "Rename the table, then insert");
+SELECT * FROM t2;
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables WHERE name LIKE 'test%';
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t2.ibd
+--file_exists $MYSQLD_DATADIR/test/t2.isl
+--error 1
+--file_exists $MYSQLD_DATADIR/test/t2.ibd
+
+--echo # CREATE TABLE LIKE does not retain DATA DIRECTORY automatically.
+CREATE TABLE t3 LIKE t2;
+INSERT INTO t3 VALUES (5, "CREATE TABLE LIKE");
+SELECT * FROM t3;
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables WHERE name LIKE 'test%';
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces;
+--replace_result ./ MYSQLD_DATADIR/ $MYSQLD_DATADIR MYSQLD_DATADIR  $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+--file_exists $MYSQLD_DATADIR/test/t3.ibd
+--error 1
+--file_exists $MYSQLD_DATADIR/test/t3.isl
+
+--echo # Now make sure the tables can be fully dropped.
+DROP TABLE t2, t3;
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables WHERE name LIKE 'test%';
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces;
+SELECT path FROM information_schema.innodb_sys_datafiles;
+--error 1
+--file_exists $MYSQLD_DATADIR/test/t2.frm
+--error 1
+--file_exists $MYSQLD_DATADIR/test/t2.isl
+--error 1
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t2.ibd
+--error 1
+--file_exists $MYSQLD_DATADIR/test/t3.frm
+--error 1
+--file_exists $MYSQLD_DATADIR/test/t3.ibd
+
+--echo # Be sure SQL MODE "NO_DIR_IN_CREATE" prevents the use of DATA DIRECTORY
+SET @org_mode=@@sql_mode;
+SET @@sql_mode='NO_DIR_IN_CREATE';
+SELECT @@sql_mode;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+eval CREATE TABLE t1 (a int, b text) $data_directory_clause;
+SHOW WARNINGS;
+INSERT INTO t1 VALUES (6, "SQL MODE NO_DIR_IN_CREATE prevents DATA DIRECTORY");
+# Checking if tablespace exists in --datadir since DATA DIRECTORY was ignored.
+--file_exists $MYSQLD_DATADIR/test/t1.ibd
+DROP TABLE t1;
+set @@sql_mode=@org_mode;
+
+--echo # MySQL engine does not allow DATA DIRECTORY to be
+--echo # within --datadir for any engine, including InnoDB
+--replace_result $MYSQLD_DATADIR MYSQLD_DATADIR
+--error ER_WRONG_ARGUMENTS
+eval CREATE TABLE t1 (a int KEY, b text) DATA DIRECTORY '$MYSQLD_DATADIR/test';
+
+--echo # TEMPORARY tables are incompatible with DATA DIRECTORY
+SET SESSION innodb_strict_mode = ON;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+--error ER_CANT_CREATE_TABLE
+eval CREATE TEMPORARY TABLE t1 (a int KEY, b text) engine=InnoDB $data_directory_clause;
+SHOW WARNINGS;
+SET SESSION innodb_strict_mode = OFF;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+eval CREATE TEMPORARY TABLE t1 (a int KEY, b text) engine=InnoDB $data_directory_clause;
+SHOW WARNINGS;
+SHOW CREATE TABLE t1;
+DROP TABLE t1;
+--error 1
+--file_exists $MYSQLD_DATADIR/test/t1.frm
+--error 1
+--file_exists $MYSQLD_DATADIR/test/t1.isl
+--error 1
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t1.ibd
+--error 1
+--file_exists $MYSQLD_DATADIR/test/t1.ibd
+
+
+--echo # Create the remote table via static DDL statements in a stored procedure
+DELIMITER |;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+eval CREATE PROCEDURE static_proc() BEGIN CREATE TABLE t1 (a int KEY, b text) $data_directory_clause; END |
+DELIMITER ;|
+CALL static_proc;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+INSERT INTO t1 VALUES (7, "Create the remote table via static DDL statements");
+SELECT * FROM t1;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE t1;
+--file_exists $MYSQLD_DATADIR/test/t1.frm
+--file_exists $MYSQLD_DATADIR/test/t1.isl
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t1.ibd
+DROP PROCEDURE static_proc;
+DROP TABLE t1;
+
+--echo # Create the remote table via dynamic DDL statements in a stored procedure
+DELIMITER |;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+eval CREATE PROCEDURE dynamic_proc() BEGIN PREPARE stmt1 FROM "CREATE TABLE t1 (a int KEY, b text) $data_directory_clause"; EXECUTE stmt1; END |
+DELIMITER ;|
+CALL dynamic_proc;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles;
+INSERT INTO t1 VALUES (8, "Create the remote table via dynamic DDL statements");
+SELECT * FROM t1;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE t1;
+--file_exists $MYSQLD_DATADIR/test/t1.frm
+--file_exists $MYSQLD_DATADIR/test/t1.isl
+--file_exists $MYSQL_TMP_DIR/alternate_dir/test/t1.ibd
+DROP PROCEDURE dynamic_proc;
+DROP TABLE t1;
+
+--echo #
+--echo # CREATE, DROP, ADD and TRUNCATE PARTITION with DATA DIRECTORY
+--echo #
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+eval CREATE TABLE emp (
+    id INT NOT NULL,
+    store_name VARCHAR(30),
+    parts VARCHAR(30),
+    store_id INT
+)
+PARTITION BY LIST(store_id) (
+  PARTITION east VALUES IN (10,20,30)
+    DATA DIRECTORY = '$MYSQL_TMP_DIR/alt-dir-east',
+  PARTITION north VALUES IN (40,50,60)
+    DATA DIRECTORY = '$MYSQL_TMP_DIR/alt-dir-north',
+  PARTITION west VALUES IN (70,80,100)
+    DATA DIRECTORY = '$MYSQL_TMP_DIR/alt-dir-west'
+);
+
+INSERT INTO emp values(1,'Oracle','NUTT',10);
+INSERT INTO emp values(2,'HUAWEI','BOLT',40);
+INSERT INTO emp values(3,'IBM','NAIL',70);
+
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE emp;
+# InnoDB always converts table names to lower case on Windows
+--replace_regex /emp#P#/emp#p#/
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables
+       WHERE name LIKE 'test%'
+       ORDER BY name;
+--replace_regex /emp#P#/emp#p#/
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces
+       ORDER BY name;
+--replace_regex /emp#P#/emp#p#/
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles
+       ORDER BY path;
+SELECT * FROM emp;
+--file_exists $MYSQLD_DATADIR/test/emp.frm
+--file_exists $MYSQLD_DATADIR/test/emp.par
+--file_exists $MYSQLD_DATADIR/test/emp#P#east.isl
+--file_exists $MYSQLD_DATADIR/test/emp#P#north.isl
+--file_exists $MYSQLD_DATADIR/test/emp#P#west.isl
+--file_exists $MYSQL_TMP_DIR/alt-dir-east/test/emp#P#east.ibd
+--file_exists $MYSQL_TMP_DIR/alt-dir-north/test/emp#P#north.ibd
+--file_exists $MYSQL_TMP_DIR/alt-dir-west/test/emp#P#west.ibd
+
+
+--echo # DROP one PARTITION.
+ALTER TABLE emp DROP PARTITION west;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE emp;
+--replace_regex /emp#P#/emp#p#/
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables
+       WHERE name LIKE 'test%'
+       ORDER BY name;
+--replace_regex /emp#P#/emp#p#/
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces
+       ORDER BY name;
+--replace_regex /emp#P#/emp#p#/
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles
+       ORDER BY path;
+SELECT * FROM emp;
+--file_exists $MYSQLD_DATADIR/test/emp.frm
+--file_exists $MYSQLD_DATADIR/test/emp.par
+--file_exists $MYSQLD_DATADIR/test/emp#P#east.isl
+--file_exists $MYSQLD_DATADIR/test/emp#P#north.isl
+--error 1
+--file_exists $MYSQLD_DATADIR/test/emp#P#west.isl
+--file_exists $MYSQL_TMP_DIR/alt-dir-east/test/emp#P#east.ibd
+--file_exists $MYSQL_TMP_DIR/alt-dir-north/test/emp#P#north.ibd
+--error 1
+--file_exists $MYSQL_TMP_DIR/alt-dir-west/test/emp#P#west.ibd
+
+
+--echo # ADD the PARTITION back.
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+eval ALTER TABLE emp ADD PARTITION (
+  PARTITION west VALUES IN (70,80,100)
+    DATA DIRECTORY = '$MYSQL_TMP_DIR/alt-dir-west');
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE emp;
+--replace_regex /emp#P#/emp#p#/
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables
+       WHERE name LIKE 'test%'
+       ORDER BY name;
+--replace_regex /emp#P#/emp#p#/
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces
+       ORDER BY name;
+--replace_regex /emp#P#/emp#p#/
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles
+       ORDER BY path;
+INSERT INTO emp VALUES(3,'IBM','NAIL',70);
+SELECT * FROM emp;
+--file_exists $MYSQLD_DATADIR/test/emp.frm
+--file_exists $MYSQLD_DATADIR/test/emp.par
+--file_exists $MYSQLD_DATADIR/test/emp#P#east.isl
+--file_exists $MYSQLD_DATADIR/test/emp#P#north.isl
+--file_exists $MYSQLD_DATADIR/test/emp#P#west.isl
+--file_exists $MYSQL_TMP_DIR/alt-dir-east/test/emp#P#east.ibd
+--file_exists $MYSQL_TMP_DIR/alt-dir-north/test/emp#P#north.ibd
+--file_exists $MYSQL_TMP_DIR/alt-dir-west/test/emp#P#west.ibd
+
+--echo # TRUNCATE one PARTITION.
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+ALTER TABLE emp TRUNCATE PARTITION west;
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SHOW CREATE TABLE emp;
+--replace_regex /emp#P#/emp#p#/
+SELECT name,n_cols,file_format,row_format
+       FROM information_schema.innodb_sys_tables
+       WHERE name LIKE 'test%'
+       ORDER BY name;
+--replace_regex /emp#P#/emp#p#/
+SELECT name,file_format,row_format
+       FROM information_schema.innodb_sys_tablespaces
+       ORDER BY name;
+--replace_regex /emp#P#/emp#p#/
+--replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR
+SELECT path FROM information_schema.innodb_sys_datafiles
+       ORDER BY path;
+SELECT * FROM emp;
+INSERT INTO emp VALUES(3,'IBM','NAIL',70);
+SELECT * FROM emp;
+--file_exists $MYSQLD_DATADIR/test/emp.frm
+--file_exists $MYSQLD_DATADIR/test/emp.par
+--file_exists $MYSQLD_DATADIR/test/emp#P#east.isl
+--file_exists $MYSQLD_DATADIR/test/emp#P#north.isl
+--file_exists $MYSQLD_DATADIR/test/emp#P#west.isl
+--file_exists $MYSQL_TMP_DIR/alt-dir-east/test/emp#P#east.ibd
+--file_exists $MYSQL_TMP_DIR/alt-dir-north/test/emp#P#north.ibd
+--file_exists $MYSQL_TMP_DIR/alt-dir-west/test/emp#P#west.ibd
+
+DROP TABLE emp;
+
+--echo #
+--echo # Cleanup
+--echo #
+
+--rmdir $MYSQL_TMP_DIR/alternate_dir/test
+--rmdir $MYSQL_TMP_DIR/alternate_dir
+--rmdir $MYSQL_TMP_DIR/alt-dir-east/test
+--rmdir $MYSQL_TMP_DIR/alt-dir-east
+--rmdir $MYSQL_TMP_DIR/alt-dir-north/test
+--rmdir $MYSQL_TMP_DIR/alt-dir-north
+--rmdir $MYSQL_TMP_DIR/alt-dir-west/test
+--rmdir $MYSQL_TMP_DIR/alt-dir-west
+
+--disable_query_log
+EVAL SET GLOBAL innodb_file_format=$innodb_file_format_orig;
+EVAL SET GLOBAL innodb_file_per_table=$innodb_file_per_table_orig;
+EVAL SET SESSION innodb_strict_mode=$innodb_strict_mode_orig;
+--enable_query_log
+
